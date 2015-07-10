@@ -56,6 +56,7 @@ byte MMA8452Q::init(MMA8452Q_Scale fsr, MMA8452Q_ODR odr)
 	
 	setScale(scale);  // Set up accelerometer scale
 	setODR(odr);  // Set up output data rate
+	m_odr = odr;
 	setupPL();  // Set up portrait/landscape detection
 	// Multiply parameter by 0.0625g to calculate threshold.
 	setupTap(0x80, 0x80, 0x08); // Disable x, y, set z to 0.5g
@@ -63,6 +64,66 @@ byte MMA8452Q::init(MMA8452Q_Scale fsr, MMA8452Q_ODR odr)
 	active();  // Set to active to start reading
 	
 	return 1;
+}
+
+// SETUP AUTO SLEEP/WAKE FUNCTIONS
+// This functions allows you to set the sleep parameters (rate and power mode)
+// for the MMA8452Q.  In addition, you can specify the events that can trigger
+// the device to wake up.
+// INPUTS:
+//		sleepRate, Possible values: ODR_SLEEP_50, ODR_SLEEP_12, ODR_SLEEP_6, ODR_SLEEP_1
+//		powerMode Possible values: NORMAL, LOWNOISE_LOWPOWER,HIGH_RES,LOW_POWER
+//		wakeTriggers: byte whose 4 LSBs are binary (0 = disable, 1 = enable) flags
+//				corresponding to the following possible wake triggers
+//					bit 0: Transient event
+//					bit 1: Landscape/portrait change
+//					bit 2: Pulse detection
+//					bit 3: Freefall/motion detection
+//				For example, a value of 5 (binary 0101) will enable wake on transient and pulse.
+//		sleepTime: Time (in seconds) without wakeTriggers before device falls asleep.  Max value 81s.
+void MMA8452Q::setupAutoSleep(MMA8452Q_Sleep_Rate sleepRate, MMA8452Q_Oversampling powerMode, byte wakeTriggers, float sleepTime)
+{
+	// Must be in standby to change registers
+	standby();
+
+	// Set sleep rate and oversampling
+	setSleepRate(sleepRate);
+	setSleepOversampling(powerMode);
+
+	if (wakeTriggers & 0x01) wakeOnTransient(true);
+	if (wakeTriggers & 0x02) wakeOnLandPortChange(true);
+	if (wakeTriggers & 0x04) wakeOnPulse(true);
+	if (wakeTriggers & 0x08) wakeOnFFMotion(true);
+
+	enableAutoSleep(true);
+
+	setSleepTime(sleepTime);
+
+	active();
+}
+
+// SETUP MOTION DETECTION CONFIGURATION, as per AN4070 (application note)
+void MMA8452Q::setupMotionDetection(MMA8452Q_FF_MT_EventAxes axes, float threshold_g, byte debounceCounts, MMA8452Q_IntPinRoute intPin)
+{
+	// Must be in standby to change registers
+	standby();
+
+	// Configure Motion Detection Interrupt conditions
+	enableFFMotionEventLatch(true);
+	chooseFFMotionDetection(MOTION);
+	setFFMotionAxes(axes);
+	enableFFMotionInt(true);
+	routeFFMotionInt(intPin);
+
+	// Threshold Setting Value for Motion detection (Max is 8g)
+	setFFMotionThreshold(threshold_g, false);
+
+	// Set the debounce counter to eliminate false readings 
+	// Example: for 100 Hz sample rate with a requirement of 100 ms timer --> 100 ms/10 ms (steps) = 10 counts
+	setFFMotionDebounceSamples(debounceCounts);
+
+	// Put the device in Active Mode
+	active();
 }
 
 // READ ACCELERATION DATA
@@ -312,6 +373,7 @@ void MMA8452Q::setODR(MMA8452Q_ODR odr)
 	ctrl &= 0xC7; // Mask out data rate bits [3:5]
 	ctrl |= (odr << 3);
 	writeRegister(CTRL_REG1, ctrl);
+	m_odr = odr;
 }
 
 // SET THE SLEEP OUTPUT DATA RATE
@@ -709,137 +771,25 @@ byte MMA8452Q::readPL()
 		return (plStat & 0x6) >> 1;
 }
 
-// SETUP AUTO-WAKE/SLEEP CONFIGURATION, as per AN4601 (application note)
-void MMA8452Q::setupAutoWakeSleep()
-{
-	// Reset all values to default
-	reset();
-
-	// System must be in standby to change most register values
-	standby();
-
-	// Set data rates (CTRL_REG1 values)
-	setODR(ODR_50);
-	setSleepRate(ODR_SLEEP_12);
-	setNoiseMode(LOW_NOISE);
-	enableFastRead(false);
-	
-	// Enable sleep, normal mode
-	enableAutoSleep(true);
-	setWakeOversampling(NORMAL);
-	setSleepOversampling(NORMAL);
-
-	// Set wake-up condition
-	// transient enabled wake up from auto-sleep
-	wakeOnTransient(true);
-
-	// Enable interrupts
-	// ASLP INT enabled, Transient INT enabled
-	enableSleepInt(true);
-	enableTransientInt(true);
-
-	// Route interrupts to external pins
-	// auto-sleep -> INT1,transient -> INT2
-	routeSleepInt(INT_PIN1);
-	routeTransientInt(INT_PIN2);
-
-	// HPF output enabled , 2g mode
-	setScale(SCALE_2G);
-	enableHighPassOutput(true);
-
-	// HPF=2Hz (since ODR is 50Hz)
-	setHPCutoff(HP0);
-	bypassHPonPulse(false);
-
-	// P/L disabled
-	writeRegister(PL_CFG,0x80);
-
-	// MT/FF disabled
-	writeRegister(FF_MT_CFG,0x00);
-
-	// TRANSIENT
-	// ELE latch disabled, HPF enable, transient x/y/z axes enabled
-	writeRegister(TRANSIENT_CFG,0x0E);
-
-	// transient threshold=0.126g
-	writeRegister(TRANSIENT_THS,0x01);
-	writeRegister(TRANSIENT_COUNT,0x00);
-
-	// tap/double tap disabled
-	writeRegister(PULSE_CFG,0x00);
-	// the minimum time required to be judged from move to stop,set to 3 sec
-	// the time can also be set up to 81 sec (when set to 0xFF)
-	writeRegister(ASLP_COUNT,0x0A);
-	writeRegister(CTRL_REG1,0x65);
-}
-
-//// SETUP MOTION DETECTION CONFIGURATION, as per AN4070 (application note)
-//void MMA8452Q::setupMotionDetection()
-//{
-//	// Put the device into Standby Mode: Register 0x2A CTRL_REG1
-//	writeRegister(CTRL_REG1,0x18); // Set the device in 100 Hz ODR, Standby
-//
-//	// Set Configuration Register for Motion Detection by setting the “OR” condition OAE = 1, enabling X, Y, and the latch
-//	writeRegister(FF_MT_CFG,0xD8);
-//
-//	// Threshold Setting Value for the Motion detection of > 3g
-//	// Note: The step count is 0.063g/ count
-//	// • 3g/0.063g = 47.6; //Round up to 48
-//	writeRegister(FF_MT_THS,0x30);
-//
-//	// Set the debounce counter to eliminate false readings for 100 Hz sample rate with a requirement
-//	// of 100 ms timer.
-//	// Note: 100 ms/10 ms (steps) = 10 counts
-//	writeRegister(FF_MT_COUNT,0x0A);
-//
-//	// Enable Motion/Freefall Interrupt Function in the System (CTRL_REG4)
-//	writeRegister(CTRL_REG4,0x04);
-//
-//	// Route the Motion/Freefall Interrupt Function to INT1 hardware pin (CTRL_REG5)
-//	writeRegister(CTRL_REG5,0x04);
-//
-//	// Put the device in Active Mode
-//	byte c = readRegister(CTRL_REG1);
-//	writeRegister(CTRL_REG1,c|0x01);
-//}
-
-// SETUP MOTION DETECTION CONFIGURATION, as per AN4070 (application note)
-void MMA8452Q::setupMotionDetection()
-{
-	// Configuration registers must be in stanby before setting
-	standby();
-	
-	// Set wake data rates and max acceleration scale
-	setScale(SCALE_2G);
-	setODR(ODR_800);
-
-	// Configure Motion Detection Interrupt conditions
-	enableFFMotionEventLatch(true);
-	chooseFFMotionDetection(MOTION);
-	setFFMotionAxes(XY);
-
-	// Threshold Setting Value for Motion detection (Max is 8g)
-	setFFMotionThreshold(0.63, false);
-
-	// Set the debounce counter to eliminate false readings for 100 Hz sample rate with a requirement
-	// of 100 ms timer.
-	// Note: 100 ms/10 ms (steps) = 10 counts
-	setFFMotionDebounceSamples(10);
-
-	// Enable Motion/Freefall Interrupt Function in the System (CTRL_REG4)
-	enableFFMotionInt(true);
-
-	// Route the Motion/Freefall Interrupt Function to INT1 hardware pin (CTRL_REG5)
-	routeFFMotionInt(INT_PIN1);
-
-	// Put the device in Active Mode
-	active();
-}
-
 //  RESET all registers! (All settings will be lost and zeros will be written!)
 void MMA8452Q::reset()
 {
 	writeRegister(CTRL_REG2, 0x40); //Flip reset bit
+}
+
+
+// SET TIMEOUT TO FALL ASLEEP
+// If enableAutoSleep(true) is called, then the device will
+// enter sleep mode after the "time" seconds, unless an
+// interrupt that has been enable to wake, using wakeOnXXX(),
+// is triggered.  The maximum wait is 162s when data rate is
+// 1.56Hz and it is 81s for all other data rates.
+void MMA8452Q::setSleepTime(float time)
+{
+	// Must be in standby mode to make changes!!!
+	if (m_odr == ODR_1) time *= 1.574;
+	else time *= 3.148;
+	writeRegister(ASLP_COUNT, (byte)time);
 }
 
 // SET STANDBY MODE

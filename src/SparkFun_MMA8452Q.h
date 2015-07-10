@@ -113,11 +113,12 @@ public:
 	byte readTap();
 	byte readPL();
 
-	void setupAutoWakeSleep();
-	void setupMotionDetection();
-	
+	void setupAutoSleep(MMA8452Q_Sleep_Rate sleepRate,MMA8452Q_Oversampling powerMode, byte wakeTriggers, float sleepTime);
+	void setupMotionDetection(MMA8452Q_FF_MT_EventAxes axes, float threshold_g, byte debounceCounts, MMA8452Q_IntPinRoute intPin);
+		
     short x, y, z;
 	float cx, cy, cz;
+	MMA8452Q_ODR m_odr;
 
 //private:
 	byte address;
@@ -178,6 +179,9 @@ public:
 
 	//FF_MT_COUNT (0x18), Debounce Register (Read/Write)
 	void setFFMotionDebounceSamples(byte samples);
+
+	//ASLP_COUNT (0x29),  Sleep time register (Read/Write)
+	void setSleepTime(float time);
 
 	//CTRL_REG1
 	void standby();
