@@ -194,15 +194,111 @@ void MMA8452Q::enableLPonPulse(bool enable)
 	writeRegister(HP_FILTER_CUTOFF, ctrl);
 }
 
+// ENABLE EVENT LATCH
+// When enabled, the register FF_MT_SRC will remain high
+// until it is cleared, once freefall or motion is detected.
+// When disabled (false), FF_MT_SRC will show the real-time detection status.
+// Possible values are true (hold latch) or false (real-time status)
 void MMA8452Q::enableFFMotionEventLatch(bool enable)
 {
-
+	// Must be in standby mode to make changes!!!
+	byte ctrl = readRegister(FF_MT_CFG);
+	ctrl &= 0x7F; // Mask out ELE bit (bit 7)
+	ctrl |= (enable << 7);
+	writeRegister(FF_MT_CFG, ctrl);
 }
+
+// CHOOSE FREEFALL OR MOTION DETECTION
+// The detector can sense one or the other (rather self-explanatory)
+// Possible values: FREEFALL, MOTION
 void MMA8452Q::chooseFFMotionDetection(MMA8452Q_FF_MT_Selection FF_or_MT)
 {
+	// Must be in standby mode to make changes!!!
+	byte ctrl = readRegister(FF_MT_CFG);
+	ctrl &= 0xBF; // Mask out OAE bit (bit 6)
+	ctrl |= (FF_or_MT << 6);
+	writeRegister(FF_MT_CFG, ctrl);
 }
-void MMA8452Q::chooseFFMotionAxes(MMA8452Q_FF_MT_EventAxes axes)
+
+// CHOOSE AXES FOR FREEFALL/MOTION DETECTION
+// The freefall/motion detector can trigger on any combination of axes.
+// Possible values: X, Y, Z, XY, XZ, YZ, XYZ
+void MMA8452Q::setFFMotionAxes(MMA8452Q_FF_MT_EventAxes axes)
 {
+	// Must be in standby mode to make changes!!!
+	byte ctrl = readRegister(FF_MT_CFG);
+	ctrl &= 0xC7; // Mask out XEFE,YEFE,ZEFE bits (bits [3:5])
+	ctrl |= (axes << 3);
+	writeRegister(FF_MT_CFG, ctrl);
+}
+
+// CLEAR FREEFALL/MOTION INTERRUPT
+// The interrupt is cleared by reading the register which returns
+// the following information:
+// FFMotionIntData.isDetected: true if an enabled axis triggered the interrupt
+// FFMotionIntData.axes: Boolean true/false indicators of the detected 
+//				status on the X, Y, and Z axes respectively.  For example, 
+//				a return of 2 (binary 0010) means that Y was detected, 
+//				a return of 7 (binary 0111) means that X, Y, and Z were all triggered.
+//				Possible values: decimal values 0-7.
+// FFMotionIntData.sign: Boolean sign (0 = "+", 1 = "-") of the detected 
+//				event on the X, Y, and Z axes respectively.  For example, 
+//				a return of 3 (binary 0011) means that the disturbance on 
+//				X was negative, on Y was negative, and on Z was positive.  
+//				The sign is relative to the threshold values set in FF_MT_THS.
+FFMotionIntData MMA8452Q::clearFFMotionInterrupt(){
+	FFMotionIntData data;
+	byte reg = readRegister(FF_MT_SRC);
+
+	// Mask EA bit (bit 7)
+	data.isDetected = (bool)(reg & 0x80);
+
+	// Mask individual bits and combine
+	// X: bit 1, Y: bit 3, Z: bit 5
+	byte xVal = reg & 0x02;
+	byte yVal = reg & 0x08;
+	byte zVal = reg & 0x20;
+	// Reorder bits to be at bits 0:2
+	data.axes = (xVal >> 1) | (yVal >> 2) | (zVal >> 3);
+
+	// Mask individual bits and combine
+	// X: bit 1, Y: bit 3, Z: bit 5
+	byte xSign = reg & 0x01;
+	byte ySign = reg & 0x04;
+	byte zSign = reg & 0x10;
+	// Reorder bits to be at bits 0:2
+	data.sign = xSign | (ySign >> 1) | (zSign >> 2);
+	
+	return data;
+}
+
+// SETUP FREEFALL/MOTION THRESHOLD AND DEBOUNCE BEHAVIOR
+// INPUTS:
+//		decrementORreset (bool): When a freefall/motion event is detected, 
+//			it increments a debounce counter. When the event is no longer 
+//			present, you can choose to either decrement (true) or reset (false) 
+//			the debounce counter.  Decrementing acts as a median filter.
+//
+//		threshold (float): Threshold in g's for triggering freefall/motion
+//			interrupt.  The maximum value is 8g, with resolution of 0.063g.
+void MMA8452Q::setFFMotionThreshold(float threshold, bool decrementORreset){
+	// Must be in standby mode to make changes!!!
+
+	// Convert value to counts between 0-127, place in bits 0:6
+	byte reg = (byte)(threshold * 15.875);
+	// Place bool flag in bit 7
+	reg |= ((byte)decrementORreset) << 7;
+	writeRegister(FF_MT_THS, reg);
+}
+
+// SET MIN SAMPLES IN DEBOUNCE COUNTER FOR FREEFALL/MOTION INTERRUPT TRIGGER
+// Here you can set a value between 0-255 for the number of
+// counts needed in the debounce counter before the interrupt
+// flag is thrown.  Time constant depends on data rate and oversampling mode.
+void MMA8452Q::setFFMotionDebounceSamples(byte samples)
+{
+	// Must be in standby mode to make changes!!!
+	writeRegister(FF_MT_COUNT, samples);
 }
 
 // SET THE OUTPUT DATA RATE
@@ -710,46 +806,34 @@ void MMA8452Q::setupAutoWakeSleep()
 // SETUP MOTION DETECTION CONFIGURATION, as per AN4070 (application note)
 void MMA8452Q::setupMotionDetection()
 {
+	// Configuration registers must be in stanby before setting
+	standby();
 	
-	standby();  // Must be in standby to change registers
-	
-	setScale(SCALE_2G);  // Set up accelerometer scale
-	setODR(ODR_800);  // Set up output data rate
-	//setupPL();  // Set up portrait/landscape detection
-	// Multiply parameter by 0.0625g to calculate threshold.
-	//setupTap(0x80, 0x80, 0x08); // Disable x, y, set z to 0.5g
-	
-	//active();  // Set to active to start reading
+	// Set wake data rates and max acceleration scale
+	setScale(SCALE_2G);
+	setODR(ODR_800);
 
-	// Put the device into Standby Mode: Register 0x2A CTRL_REG1
-	//writeRegister(CTRL_REG1,0x18); // Set the device in 100 Hz ODR, Standby
+	// Configure Motion Detection Interrupt conditions
+	enableFFMotionEventLatch(true);
+	chooseFFMotionDetection(MOTION);
+	setFFMotionAxes(XY);
 
-	// Set Configuration Register for Motion Detection by setting the “OR” condition OAE = 1, enabling X, Y, and the latch
-	writeRegister(FF_MT_CFG,0xD8);
-
-	// Threshold Setting Value for the Motion detection of > 3g
-	// Note: The step count is 0.063g/ count
-	// • 0.63g/0.063g = 10 (hex 0x0A)
-	writeRegister(FF_MT_THS,0x0A);
+	// Threshold Setting Value for Motion detection (Max is 8g)
+	setFFMotionThreshold(0.63, false);
 
 	// Set the debounce counter to eliminate false readings for 100 Hz sample rate with a requirement
 	// of 100 ms timer.
 	// Note: 100 ms/10 ms (steps) = 10 counts
-	writeRegister(FF_MT_COUNT,0x0A);
+	setFFMotionDebounceSamples(10);
 
 	// Enable Motion/Freefall Interrupt Function in the System (CTRL_REG4)
-	writeRegister(CTRL_REG4,0x04);
+	enableFFMotionInt(true);
 
 	// Route the Motion/Freefall Interrupt Function to INT1 hardware pin (CTRL_REG5)
-	writeRegister(CTRL_REG5,0x04);
+	routeFFMotionInt(INT_PIN1);
 
 	// Put the device in Active Mode
-	byte c = readRegister(CTRL_REG1);
-	writeRegister(CTRL_REG1,c|0x01);
-}
-
-void MMA8452Q::clearFFMotionInterrupt(){
-	readRegister(FF_MT_SRC);
+	active();
 }
 
 //  RESET all registers! (All settings will be lost and zeros will be written!)

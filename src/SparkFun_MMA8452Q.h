@@ -88,6 +88,12 @@ enum MMA8452Q_HPFiltCutoff{ HP0, HP1, HP2, HP3}; // possible high-pass filter cu
 enum MMA8452Q_FF_MT_Selection{ FREEFALL, MOTION }; // possible configurations of the motion/freefall event detector: FREEFALL, MOTION
 enum MMA8452Q_FF_MT_EventAxes{ NONE, X, Y, XY, Z, XZ, YZ, XYZ}; // possible axes configurations to set-off motion/freefall detection flag: NONE, X, Y, Z, XY, XZ, YZ, XYZ
 
+typedef struct{
+	bool isDetected;
+	byte axes;
+	byte sign;
+}FFMotionIntData;
+
 // Possible portrait/landscape settings
 #define PORTRAIT_U 0
 #define PORTRAIT_D 1
@@ -109,7 +115,6 @@ public:
 
 	void setupAutoWakeSleep();
 	void setupMotionDetection();
-	void clearFFMotionInterrupt();
 	
     short x, y, z;
 	float cx, cy, cz;
@@ -121,49 +126,58 @@ public:
 	void setupTap(byte xThs, byte yThs, byte zThs);
 	void setupPL();
 
-	// STATUS (0x00), Data Status Register
+	// STATUS (0x00), Data Status Register (Read Only)
 	byte available();
 
-	// Data Registers (0x01-0x06)
+	// Data Registers (0x01-0x06), (Read Only)
 	void read();
 
-	//SYSMOD (0x0B), System Mode Register
+	//SYSMOD (0x0B), System Mode Register (Read Only)
 	byte getSystemMode();
 
-	//INT_SOURCE (0x0C), System Interrupt Status Register
+	//INT_SOURCE (0x0C), System Interrupt Status Register (Read Only)
 	byte getInterruptSources();
 
-	//WHO_AM_I (0x0D), Device ID Register
+	//WHO_AM_I (0x0D), Device ID Register (Read Only)
 	byte whoAmI();
 
-	//XYZ_DATA_CFG (0x0E), XYZ Data Configuration Register
+	//XYZ_DATA_CFG (0x0E), XYZ Data Configuration Register (Read/Write)
 	void setScale(MMA8452Q_Scale fsr);
 	void enableHighPassOutput(bool enable);
 
-	//HP_FILTER_CUTOFF (0x0F), High-Pass Filter Register
+	//HP_FILTER_CUTOFF (0x0F), High-Pass Filter Register (Read/Write)
 	void setHPCutoff(MMA8452Q_HPFiltCutoff cutoff);
 	void bypassHPonPulse(bool bypass);
 	void enableLPonPulse(bool enable);
 
-	//PL_STATUS (0x10), Portrait/Landscape Status Register
+	//PL_STATUS (0x10), Portrait/Landscape Status Register (Read Only)
 	// To Do
 
-	//PL_CFG (0x11), Portait/Landscape Configuration Register
+	//PL_CFG (0x11), Portait/Landscape Configuration Register (Read/Write)
 	// To Do
 
-	// PL_COUNT (0x12), Portrait/Landscape Debounce Register
+	// PL_COUNT (0x12), Portrait/Landscape Debounce Register (Read/Write)
 	// To Do
 
-	// PL_BF_ZCOMP (0x13), Back/Front and Z Compensation Register
+	// PL_BF_ZCOMP (0x13), Back/Front and Z Compensation Register (Read Only)
 	// To Do
 
-	// P_L_THS_REG (0x14), Portrait/Landscape Threshold and Hysteresis Register
+	// P_L_THS_REG (0x14), Portrait/Landscape Threshold and Hysteresis Register (Read Only)
 	// To Do
 
-	//FF_MT_CFG (0x15), Freefall/Motion Configuration Register
+	//FF_MT_CFG (0x15), Freefall/Motion Configuration Register (Read/Write)
 	void enableFFMotionEventLatch(bool enable);
 	void chooseFFMotionDetection(MMA8452Q_FF_MT_Selection FF_or_MT);
-	void chooseFFMotionAxes(MMA8452Q_FF_MT_EventAxes axes);
+	void setFFMotionAxes(MMA8452Q_FF_MT_EventAxes axes);
+
+	//FF_MT_SRC (0x16), Freefall/Motion Source Register (Read Only)
+	FFMotionIntData clearFFMotionInterrupt();
+
+	//FF_MT_THS (0x17), Freefall/Motion Threshold Register (Read/Write)
+	void setFFMotionThreshold(float threshold, bool decrementORreset);
+
+	//FF_MT_COUNT (0x18), Debounce Register (Read/Write)
+	void setFFMotionDebounceSamples(byte samples);
 
 	//CTRL_REG1
 	void standby();
