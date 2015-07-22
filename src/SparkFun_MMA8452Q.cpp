@@ -81,7 +81,8 @@ byte MMA8452Q::init(MMA8452Q_Scale fsr, MMA8452Q_ODR odr)
 //					bit 3: Freefall/motion detection
 //				For example, a value of 5 (binary 0101) will enable wake on transient and pulse.
 //		sleepTime: Time (in seconds) without wakeTriggers before device falls asleep.  Max value 81s.
-void MMA8452Q::setupAutoSleep(MMA8452Q_Sleep_Rate sleepRate, MMA8452Q_Oversampling powerMode, byte wakeTriggers, float sleepTime)
+//		intPin: pin (INT_PIN1 or INT_PIN2) where interrupt will be routed when wake/sleep state changes
+void MMA8452Q::setupAutoSleep(MMA8452Q_Sleep_Rate sleepRate, MMA8452Q_Oversampling powerMode, byte wakeTriggers, float sleepTime, MMA8452Q_IntPinRoute intPin)
 {
 	// Must be in standby to change registers
 	standby();
@@ -98,6 +99,8 @@ void MMA8452Q::setupAutoSleep(MMA8452Q_Sleep_Rate sleepRate, MMA8452Q_Oversampli
 	enableAutoSleep(true);
 
 	setSleepTime(sleepTime);
+
+	routeSleepInt(intPin);
 
 	active();
 }
