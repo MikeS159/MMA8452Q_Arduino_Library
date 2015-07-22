@@ -1,27 +1,18 @@
 /******************************************************************************
-SparkFun_MMA8452Q.cpp
-SparkFun_MMA8452Q Library Source File
-Jim Lindblom @ SparkFun Electronics
-Original Creation Date: June 3, 2014
+MMA8452Q.cpp
+MMA8452Q Library Source File
+Matt Reaves, modified from library provided by SparkFun Electronics
+Original Creation Date: July 22, 2015
 https://github.com/sparkfun/MMA8452_Accelerometer
 
 This file implements all functions of the MMA8452Q class. Functions here range
 from higher level stuff, like reading/writing MMA8452Q registers to low-level,
 hardware I2C reads and writes.
 
-Development environment specifics:
-	IDE: Arduino 1.0.5
-	Hardware Platform: Arduino Uno
-
-	**Updated for Arduino 1.6.4 5/2015**
-	
-This code is beerware; if you see me (or any other SparkFun employee) at the
-local, and you've found our code helpful, please buy us a round!
-
 Distributed as-is; no warranty is given.
 ******************************************************************************/
 
-#include "SparkFun_MMA8452Q.h"
+#include "MMA8452Q.h"
 #include <Arduino.h>
 #include <Wire.h>
 
