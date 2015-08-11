@@ -97,14 +97,14 @@ void MMA8452Q::setupAutoSleep(MMA8452Q_Sleep_Rate sleepRate, MMA8452Q_Oversampli
 }
 
 // SETUP MOTION DETECTION CONFIGURATION, as per AN4070 (application note)
-void MMA8452Q::setupMotionDetection(MMA8452Q_FF_MT_EventAxes axes, float threshold_g, byte debounceCounts, MMA8452Q_IntPinRoute intPin)
+void MMA8452Q::setupFreefallOrMotionDetection(MMA8452Q_FF_MT_Selection FForMT, MMA8452Q_FF_MT_EventAxes axes, float threshold_g, byte debounceCounts, MMA8452Q_IntPinRoute intPin)
 {
 	// Must be in standby to change registers
 	standby();
 
 	// Configure Motion Detection Interrupt conditions
 	enableFFMotionEventLatch(true);
-	chooseFFMotionDetection(MOTION);
+	chooseFFMotionDetection(FForMT);
 	setFFMotionAxes(axes);
 	enableFFMotionInt(true);
 	routeFFMotionInt(intPin);

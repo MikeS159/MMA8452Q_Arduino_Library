@@ -114,7 +114,7 @@ public:
 	byte readPL();
 
 	void setupAutoSleep(MMA8452Q_Sleep_Rate sleepRate, MMA8452Q_Oversampling powerMode, byte wakeTriggers, float sleepTime, MMA8452Q_IntPinRoute intPin);
-	void setupMotionDetection(MMA8452Q_FF_MT_EventAxes axes, float threshold_g, byte debounceCounts, MMA8452Q_IntPinRoute intPin);
+	void setupFreefallOrMotionDetection(MMA8452Q_FF_MT_Selection FForMT, MMA8452Q_FF_MT_EventAxes axes, float threshold_g, byte debounceCounts, MMA8452Q_IntPinRoute intPin);
 		
     short x, y, z;
 	float cx, cy, cz;
