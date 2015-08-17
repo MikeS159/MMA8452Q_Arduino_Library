@@ -87,12 +87,37 @@ enum MMA8452Q_IntPinRoute { INT_PIN2, INT_PIN1 }; // possible interrupt pin conf
 enum MMA8452Q_HPFiltCutoff{ HP0, HP1, HP2, HP3}; // possible high-pass filter cutoffs: HP0, HP1, HP2, HP3 (see data sheet for more info)
 enum MMA8452Q_FF_MT_Selection{ FREEFALL, MOTION }; // possible configurations of the motion/freefall event detector: FREEFALL, MOTION
 enum MMA8452Q_FF_MT_EventAxes{ NONE, X, Y, XY, Z, XZ, YZ, XYZ}; // possible axes configurations to set-off motion/freefall detection flag: NONE, X, Y, Z, XY, XZ, YZ, XYZ
+enum MMA8452Q_PL_Orientation{PORTRAIT_UP,PORTRAIT_DOWN,LANDSCAPE_RIGHT,LANDSCAPE_LEFT}; // Possible orientations of device:  PORTRAIT_UP,PORTRAIT_DOWN,LANDSCAPE_RIGHT,LANDSCAPE_LEFT (see Figure 3 of data sheet)
 
 typedef struct{
 	bool isDetected;
 	byte axes;
 	byte sign;
 }FFMotionIntData;
+
+typedef struct{
+	bool newPLChange;
+	bool zTiltDetected;
+	MMA8452Q_PL_Orientation orientation;
+	bool backORfront;
+}PLStatusData;
+
+typedef struct{
+	short x;
+	short y;
+	short z;
+}rawData;
+
+typedef struct{
+	float x;
+	float y;
+	float z;
+}scaledData;
+
+typedef struct{
+	rawData raw;
+	scaledData scaled;
+}accelData;
 
 // Possible portrait/landscape settings
 #define PORTRAIT_U 0
@@ -109,13 +134,16 @@ class MMA8452Q
 public:	
     MMA8452Q(byte addr = 0x1D); // Constructor
 	
+	void resetRegisters();
 	byte init(MMA8452Q_Scale fsr = SCALE_2G, MMA8452Q_ODR odr = ODR_800);
 	byte readTap();
 	byte readPL();
 
 	void setupAutoSleep(MMA8452Q_Sleep_Rate sleepRate, MMA8452Q_Oversampling powerMode, byte wakeTriggers, float sleepTime, MMA8452Q_IntPinRoute intPin);
 	void setupFreefallOrMotionDetection(MMA8452Q_FF_MT_Selection FForMT, MMA8452Q_FF_MT_EventAxes axes, float threshold_g, byte debounceCounts, MMA8452Q_IntPinRoute intPin);
-		
+	void setupPortraitLandscapeDetection(byte debounceCounts, MMA8452Q_IntPinRoute intPin);
+	void clearAllInterrupts();
+
     short x, y, z;
 	float cx, cy, cz;
 	MMA8452Q_ODR m_odr;
@@ -132,6 +160,7 @@ public:
 
 	// Data Registers (0x01-0x06), (Read Only)
 	void read();
+	accelData getData();
 
 	//SYSMOD (0x0B), System Mode Register (Read Only)
 	byte getSystemMode();
@@ -152,19 +181,13 @@ public:
 	void enableLPonPulse(bool enable);
 
 	//PL_STATUS (0x10), Portrait/Landscape Status Register (Read Only)
-	// To Do
+	PLStatusData getPLStatus();
 
 	//PL_CFG (0x11), Portait/Landscape Configuration Register (Read/Write)
-	// To Do
+	void enablePLDetection(bool enable);
 
 	// PL_COUNT (0x12), Portrait/Landscape Debounce Register (Read/Write)
-	// To Do
-
-	// PL_BF_ZCOMP (0x13), Back/Front and Z Compensation Register (Read Only)
-	// To Do
-
-	// P_L_THS_REG (0x14), Portrait/Landscape Threshold and Hysteresis Register (Read Only)
-	// To Do
+	void setPLDebounceSamples(byte samples, bool decrementORreset);
 
 	//FF_MT_CFG (0x15), Freefall/Motion Configuration Register (Read/Write)
 	void enableFFMotionEventLatch(bool enable);
@@ -175,10 +198,10 @@ public:
 	FFMotionIntData clearFFMotionInterrupt();
 
 	//FF_MT_THS (0x17), Freefall/Motion Threshold Register (Read/Write)
-	void setFFMotionThreshold(float threshold, bool decrementORreset);
+	void setFFMotionThreshold(float threshold);
 
 	//FF_MT_COUNT (0x18), Debounce Register (Read/Write)
-	void setFFMotionDebounceSamples(byte samples);
+	void setFFMotionDebounceSamples(byte samples, bool decrementORreset);
 
 	//ASLP_COUNT (0x29),  Sleep time register (Read/Write)
 	void setSleepTime(float time);

@@ -26,6 +26,12 @@ MMA8452Q::MMA8452Q(byte addr)
 	address = addr; // Store address into private variable
 }
 
+// RESET ALL REGISTERS TO DEFAULT
+void MMA8452Q::resetRegisters()
+{
+	reset();
+}
+
 // INITIALIZATION
 //	This function initializes the MMA8452Q. It sets up the scale (either 2, 4,
 //	or 8g), output data rate, portrait/landscape detection and tap detection.
@@ -42,16 +48,14 @@ byte MMA8452Q::init(MMA8452Q_Scale fsr, MMA8452Q_ODR odr)
 	{
 		return 0;
 	}
-	
+	reset();
+	delay(100);
 	standby();  // Must be in standby to change registers
 	
 	setScale(scale);  // Set up accelerometer scale
 	setODR(odr);  // Set up output data rate
 	m_odr = odr;
-	setupPL();  // Set up portrait/landscape detection
-	// Multiply parameter by 0.0625g to calculate threshold.
-	setupTap(0x80, 0x80, 0x08); // Disable x, y, set z to 0.5g
-	
+
 	active();  // Set to active to start reading
 	
 	return 1;
@@ -110,14 +114,33 @@ void MMA8452Q::setupFreefallOrMotionDetection(MMA8452Q_FF_MT_Selection FForMT, M
 	routeFFMotionInt(intPin);
 
 	// Threshold Setting Value for Motion detection (Max is 8g)
-	setFFMotionThreshold(threshold_g, false);
+	setFFMotionThreshold(threshold_g);
 
 	// Set the debounce counter to eliminate false readings 
 	// Example: for 100 Hz sample rate with a requirement of 100 ms timer --> 100 ms/10 ms (steps) = 10 counts
-	setFFMotionDebounceSamples(debounceCounts);
+	setFFMotionDebounceSamples(debounceCounts,false);
 
 	// Put the device in Active Mode
 	active();
+}
+
+// SETUP MOTION DETECTION CONFIGURATION, as per AN4070 (application note)
+void MMA8452Q::setupPortraitLandscapeDetection(byte debounceCounts, MMA8452Q_IntPinRoute intPin)
+{
+	standby();
+	enablePLDetection(true);
+	enableLandPortInt(true);
+	routeLandPortInt(intPin);
+	setPLDebounceSamples(debounceCounts, false);
+	active();
+}
+
+// CLEAR ALL INTERRUPTS
+void MMA8452Q::clearAllInterrupts()
+{
+	clearFFMotionInterrupt();
+	getPLStatus();
+	getSystemMode();
 }
 
 // READ ACCELERATION DATA
@@ -139,6 +162,29 @@ void MMA8452Q::read()
 	cx = (float) x / (float)(1<<11) * (float)(scale);
 	cy = (float) y / (float)(1<<11) * (float)(scale);
 	cz = (float) z / (float)(1<<11) * (float)(scale);
+}
+
+// GET ACCELERATION DATA
+//  This function will read the acceleration values from the MMA8452Q. After
+//	reading, it will update a struct of accelData:
+//		* int's accelData.raw.x, y, and z will store the signed 12-bit values read out
+//		  of the acceleromter.
+//		* floats accelData.scaled.x, y, and z will store the calculated acceleration from
+//		  those 12-bit values. These variables are in units of g's.
+accelData MMA8452Q::getData()
+{
+	byte rawData[6];  // x/y/z accel register data stored here
+	readRegisters(OUT_X_MSB, rawData, 6);  // Read the six raw data registers into data array
+	accelData data;
+
+	data.raw.x = ((short)(rawData[0] << 8 | rawData[1])) >> 4;
+	data.raw.y = ((short)(rawData[2] << 8 | rawData[3])) >> 4;
+	data.raw.z = ((short)(rawData[4] << 8 | rawData[5])) >> 4;
+	data.scaled.x = (float)data.raw.x / (float)(1 << 11) * (float)(scale);
+	data.scaled.y = (float)data.raw.y / (float)(1 << 11) * (float)(scale);
+	data.scaled.z = (float)data.raw.z / (float)(1 << 11) * (float)(scale);
+
+	return data;
 }
 
 // CHECK IF NEW DATA IS AVAILABLE
@@ -249,6 +295,48 @@ void MMA8452Q::enableLPonPulse(bool enable)
 	writeRegister(HP_FILTER_CUTOFF, ctrl);
 }
 
+// GET STATUS OF PORTRAIT/LANDSCAPE ORIENTATION
+PLStatusData MMA8452Q::getPLStatus()
+{
+	byte reg = readRegister(PL_STATUS);
+	PLStatusData data;
+	data.backORfront	= reg & 0x01;									// Get bit 0
+	data.orientation	= (MMA8452Q_PL_Orientation)((reg & 0x06) >> 1);	// Get bits 1-2
+	data.zTiltDetected	= (reg & 0x40) >> 6;							// Get bit 6
+	data.newPLChange	= (reg & 0x80) >> 7;							// Get bit 7
+	return data;
+}
+
+// ENABLE PORTRAIT/LANDSCAPE FUNCTION
+void MMA8452Q::enablePLDetection(bool enable)
+{
+	byte reg = readRegister(PL_CFG);
+	reg &= 0xBF;	//Mask bit 6
+	reg |= enable << 6;
+	writeRegister(PL_CFG, reg);
+}
+
+// SET MIN SAMPLES IN DEBOUNCE COUNTER FOR PORTRAIT/LANDSCAPE INTERRUPT TRIGGER
+// Here you can set a value between 0-255 for the number of
+// counts needed in the debounce counter before the interrupt
+// flag is thrown.  Time constant depends on data rate and oversampling mode.
+//		decrementORreset (bool): When a portrait/landscape event is detected, 
+//			it increments a debounce counter. When the event is no longer 
+//			present, you can choose to either decrement (true) or reset (false) 
+//			the debounce counter.  Decrementing acts as a median filter.
+void MMA8452Q::setPLDebounceSamples(byte samples, bool decrementORreset)
+{
+
+	// Must be in standby mode to make changes!!!
+	// Place bool flag in bit 7
+	byte reg = readRegister(PL_CFG);
+	reg &= 0x7F;	// Mask bit 7
+	reg |= decrementORreset << 7;
+	writeRegister(PL_CFG, reg);
+
+	writeRegister(PL_COUNT, samples);
+}
+
 // ENABLE EVENT LATCH
 // When enabled, the register FF_MT_SRC will remain high
 // until it is cleared, once freefall or motion is detected.
@@ -329,30 +417,34 @@ FFMotionIntData MMA8452Q::clearFFMotionInterrupt(){
 
 // SETUP FREEFALL/MOTION THRESHOLD AND DEBOUNCE BEHAVIOR
 // INPUTS:
-//		decrementORreset (bool): When a freefall/motion event is detected, 
-//			it increments a debounce counter. When the event is no longer 
-//			present, you can choose to either decrement (true) or reset (false) 
-//			the debounce counter.  Decrementing acts as a median filter.
-//
 //		threshold (float): Threshold in g's for triggering freefall/motion
 //			interrupt.  The maximum value is 8g, with resolution of 0.063g.
-void MMA8452Q::setFFMotionThreshold(float threshold, bool decrementORreset){
+void MMA8452Q::setFFMotionThreshold(float threshold){
 	// Must be in standby mode to make changes!!!
 
 	// Convert value to counts between 0-127, place in bits 0:6
 	byte reg = (byte)(threshold * 15.875);
-	// Place bool flag in bit 7
-	reg |= ((byte)decrementORreset) << 7;
-	writeRegister(FF_MT_THS, reg);
+	reg &= 0x7F;	// Can only be 7 bits
+	writeRegister(FF_MT_THS, reg | readRegister(FF_MT_THS));
 }
 
 // SET MIN SAMPLES IN DEBOUNCE COUNTER FOR FREEFALL/MOTION INTERRUPT TRIGGER
 // Here you can set a value between 0-255 for the number of
 // counts needed in the debounce counter before the interrupt
 // flag is thrown.  Time constant depends on data rate and oversampling mode.
-void MMA8452Q::setFFMotionDebounceSamples(byte samples)
+//		decrementORreset (bool): When a freefall/motion event is detected, 
+//			it increments a debounce counter. When the event is no longer 
+//			present, you can choose to either decrement (true) or reset (false) 
+//			the debounce counter.  Decrementing acts as a median filter.
+void MMA8452Q::setFFMotionDebounceSamples(byte samples, bool decrementORreset)
 {
 	// Must be in standby mode to make changes!!!
+	// Place bool flag in bit 7
+	byte reg = readRegister(FF_MT_THS);
+	reg &= 0x7F;	// Mask bit 7
+	reg |= decrementORreset << 7;
+	writeRegister(FF_MT_THS, reg);
+
 	writeRegister(FF_MT_COUNT, samples);
 }
 
