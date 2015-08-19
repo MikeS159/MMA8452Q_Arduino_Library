@@ -96,6 +96,13 @@ typedef struct{
 }MotionIntData;
 
 typedef struct{
+	bool isDetected;
+	byte axes;
+	byte sign;
+	bool singleOrDouble;
+}PulseIntData;
+
+typedef struct{
 	bool newPLChange;
 	bool zTiltDetected;
 	MMA8452Q_PL_Orientation orientation;
@@ -143,6 +150,7 @@ public:
 	void setupFreefallOrMotionDetection(MMA8452Q_FF_MT_Selection FForMT, MMA8452Q_EventAxes axes, float threshold_g, byte debounceCounts, MMA8452Q_IntPinRoute intPin);
 	void setupTransientDetection(bool bypassHPF, MMA8452Q_EventAxes axes, float threshold_g, byte debounceCounts, MMA8452Q_IntPinRoute intPin);
 	void setupPortraitLandscapeDetection(byte debounceCounts, MMA8452Q_IntPinRoute intPin);
+	void setupTapDetection(MMA8452Q_EventAxes singleTapAxes, MMA8452Q_EventAxes doubleTapAxes, float threshold_g, byte maxPulseWidthCounts, byte pulseLatencyCounts, byte secondPulseWindowCounts, MMA8452Q_IntPinRoute intPin);
 	void clearAllInterrupts();
 
     short x, y, z;
@@ -218,29 +226,26 @@ public:
 	//TRANSIENT_COUNT (0x20) (Read/Write)
 	void setTransientDebounceSamples(byte samples, bool decrementORreset);
 
-	//PULSE_CFG (0x21), Debounce Register (Read/Write)
-	//TO DO
+	//PULSE_CFG (0x21), Pulse Configuration Register (Read/Write)
+	void abortDoublePulseIfEarly(bool abortOnEarly);
+	void enablePulseEventLatch(bool enable);
+	void setSinglePulseAxes(MMA8452Q_EventAxes axes);
+	void setDoublePulseAxes(MMA8452Q_EventAxes axes);
 
-	//PULSE_SRC (0x22), Debounce Register (Read)
-	//TO DO
+	//PULSE_SRC (0x22), Pulse Source Register (Read)
+	PulseIntData clearPulseInterrupt();
 
-	//PULSE_THSX (0x23), Debounce Register (Read/Write)
-	//TO DO
+	//PULSE_THSX,Y,Z (0x23-0x25), Pulse Threshold for X,Y,Z Reigster (Read/Write)
+	void setPulseThresholds(float thresholdX, float thresholdY, float thresholdZ);
 
-	//PULSE_THSY (0x24), Debounce Register (Read/Write)
-	//TO DO
+	//PULSE_TMLT (0x26), Pulse Time Window 1 Register (Read/Write)
+	void setMaxPulseWidth(byte counts);
 
-	//PULSE_THSZ (0x25), Debounce Register (Read/Write)
-	//TO DO
+	//PULSE_LTCY (0x27), Pulse Latency Timer Register (Read/Write)
+	void setPulseLatency(byte counts);
 
-	//PULSE_TMLT (0x26), Debounce Register (Read/Write)
-	//TO DO
-
-	//PULSE_LTCY (0x27), Debounce Register (Read/Write)
-	//TO DO
-
-	//PULSE_WIND (0x28), Debounce Register (Read/Write)
-	//TO DO
+	//PULSE_WIND (0x28), Second Pulse Window Register (Read/Write)
+	void setSecondPulseWindow(byte counts);
 
 	//ASLP_COUNT (0x29),  Sleep time register (Read/Write)
 	void setSleepTime(float time);

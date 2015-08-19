@@ -156,10 +156,34 @@ void MMA8452Q::setupPortraitLandscapeDetection(byte debounceCounts, MMA8452Q_Int
 	active();
 }
 
+// SETUP SINGLE TAP DETECTION
+void MMA8452Q::setupTapDetection(MMA8452Q_EventAxes singleTapAxes, MMA8452Q_EventAxes doubleTapAxes, float threshold_g, byte maxPulseWidthCounts, byte pulseLatencyCounts, byte secondPulseWindowCounts, MMA8452Q_IntPinRoute intPin)
+{
+	standby();
+	abortDoublePulseIfEarly(false);
+	enablePulseEventLatch(true);
+	setSinglePulseAxes(singleTapAxes);
+	setDoublePulseAxes(doubleTapAxes);
+	
+	// Set same threshold on all axes (setSinglePulseAxes will configure which are used)
+	setPulseThresholds(threshold_g, threshold_g, threshold_g);
+
+	setMaxPulseWidth(maxPulseWidthCounts);
+	setPulseLatency(pulseLatencyCounts);
+	setSecondPulseWindow(secondPulseWindowCounts);
+
+	enablePulseInt(true);
+	routePulseInt(intPin);
+
+	active();
+}
+
 // CLEAR ALL INTERRUPTS
 void MMA8452Q::clearAllInterrupts()
 {
 	clearFFMotionInterrupt();
+	clearTransientInterrupt();
+	clearPulseInterrupt();
 	getPLStatus();
 	getSystemMode();
 }
@@ -526,7 +550,7 @@ MotionIntData MMA8452Q::clearTransientInterrupt(){
 	MotionIntData data;
 	byte reg = readRegister(TRANSIENT_SRC);
 
-	// Mask EA bit (bit 7)
+	// Mask EA bit (bit 6)
 	data.isDetected = (bool)(reg & 0x40);
 
 	// Mask individual bits and combine
@@ -546,6 +570,22 @@ MotionIntData MMA8452Q::clearTransientInterrupt(){
 	data.sign = xSign | (ySign >> 1) | (zSign >> 2);
 
 	return data;
+}
+
+// SETUP TRANSIENT THRESHOLD
+// INPUTS:
+//		threshold (float): Threshold in g's for triggering transient
+//			interrupt.  The maximum value is 8g, with resolution of 0.063g.
+//	Note: If configuring the transient detection threshold for less than 1g, the high - pass filter will need some settling time.The settling
+//	time will vary depending on selected ODR, high - pass frequency cutoff and threshold.For more information, please refer to
+//	Freescale application note, AN4071.
+void MMA8452Q::setTransientThreshold(float threshold){
+	// Must be in standby mode to make changes!!!
+
+	// Convert value to counts between 0-127, place in bits 0:6
+	byte reg = (byte)(threshold * 15.875);
+	reg &= 0x7F;	// Can only be 7 bits
+	writeRegister(TRANSIENT_THS, reg | readRegister(TRANSIENT_THS));
 }
 
 // SET MIN SAMPLES IN DEBOUNCE COUNTER FOR TRANSIENT INTERRUPT TRIGGER
@@ -569,20 +609,143 @@ void MMA8452Q::setTransientDebounceSamples(byte samples, bool decrementORreset)
 	writeRegister(TRANSIENT_COUNT, samples);
 }
 
-// SETUP TRANSIENT THRESHOLD AND DEBOUNCE BEHAVIOR
+// ABORT DOUBLE PULSE IF TOO EARLY
+// When enabled, double pulse detection will be aborted if a pulse
+// arrives after the initial pulse, but before the delay period specified in
+// PULSE_LTCY.  If disabled, any pulses arriving in the latency period will be ignored.
+// Possible values are true (abort if received early) or false (ignore early pulse)
+void MMA8452Q::abortDoublePulseIfEarly(bool abortOnEarly)
+{
+	// Must be in standby mode to make changes!!!
+	byte ctrl = readRegister(PULSE_CFG);
+	ctrl &= 0x80; // Mask out ELE bit (bit 7)
+	ctrl |= (abortOnEarly << 7);
+	writeRegister(PULSE_CFG, ctrl);
+}
+
+// ENABLE EVENT LATCH
+// When enabled, the register PULSE_SRC will remain high
+// until it is cleared, once a pulse is detected.
+// When disabled (false), PULSE_SRC will show the real-time detection status.
+// Possible values are true (hold latch) or false (real-time status)
+void MMA8452Q::enablePulseEventLatch(bool enable)
+{
+	// Must be in standby mode to make changes!!!
+	byte ctrl = readRegister(PULSE_CFG);
+	ctrl &= 0x40; // Mask out ELE bit (bit 6)
+	ctrl |= (enable << 6);
+	writeRegister(PULSE_CFG, ctrl);
+}
+
+// CHOOSE AXES FOR SINGLE PULSE DETECTION
+// The single-pulse detector can trigger on any combination of axes.
+// Possible values: X, Y, Z, XY, XZ, YZ, XYZ
+void MMA8452Q::setSinglePulseAxes(MMA8452Q_EventAxes axes)
+{
+	// Must be in standby mode to make changes!!!
+	byte ctrl = readRegister(PULSE_CFG);
+	byte axesByte = 0x00;
+	axesByte |= (axes & 0x04) << 2;	//Set Z flag in bit 5
+	axesByte |= (axes & 0x02) << 1;	//Set Y flag in bit 3
+	axesByte |= (axes & 0x01);		//Set X flag in bit 1
+	ctrl |= axesByte;
+	writeRegister(PULSE_CFG, ctrl);
+}
+
+// CHOOSE AXES FOR DOUBLE PULSE DETECTION
+// The double-pulse detector can trigger on any combination of axes.
+// Possible values: X, Y, Z, XY, XZ, YZ, XYZ
+void MMA8452Q::setDoublePulseAxes(MMA8452Q_EventAxes axes)
+{
+	// Must be in standby mode to make changes!!!
+	byte ctrl = readRegister(PULSE_CFG);
+	byte axesByte = 0x00;
+	axesByte |= (axes & 0x04) << 3;	//Set Z flag in bit 5
+	axesByte |= (axes & 0x02) << 2;	//Set Y flag in bit 3
+	axesByte |= (axes & 0x01) << 1;	//Set X flag in bit 1
+	ctrl |= axesByte;
+	writeRegister(PULSE_CFG, ctrl);
+}
+
+// CLEAR PULSE INTERRUPT
+// The interrupt is cleared by reading the register which returns
+// the following information:
+// PulseIntData.isDetected: true if an enabled axis triggered the interrupt
+// PulseIntData.axes: Boolean true/false indicators of the detected 
+//				status on the X, Y, and Z axes respectively.  For example, 
+//				a return of 2 (binary 0010) means that Y was detected, 
+//				a return of 7 (binary 0111) means that X, Y, and Z were all triggered.
+//				Possible values: decimal values 0-7.
+// PulseIntData.sign: Boolean sign (0 = "+", 1 = "-") of the detected 
+//				event on the X, Y, and Z axes respectively.  For example, 
+//				a return of 3 (binary 0011) means that the disturbance on 
+//				X was negative, on Y was negative, and on Z was positive.  
+//				The sign is relative to the threshold values set in PULSE_THS.
+// PulseIntData.singleOrDouble: Boolean flag stating which type of pulse triggered
+//				the interrupt event, where true->Single-Pulse, false->Double-Pulse.
+PulseIntData MMA8452Q::clearPulseInterrupt(){
+	PulseIntData data;
+	byte reg = readRegister(PULSE_SRC);
+
+	// Mask EA bit (bit 7)
+	data.isDetected = (bool)(reg & 0x80);
+
+	// Mask AxZ,AxY,AxX bits 4-6
+	data.axes = (reg & 0x70) >> 4;
+
+	// Mask PolZ,PolY,PolZ bits 0-2
+	data.sign = reg & 0x07;
+
+	// Mask DPE bit 3
+	data.singleOrDouble = (reg & 0x08) >> 3;
+
+	return data;
+}
+
+// SETUP TRANSIENT THRESHOLDS
 // INPUTS:
-//		threshold (float): Threshold in g's for triggering transient
+//		thresholdX,Y,Z (float): Threshold in g's for triggering transient
 //			interrupt.  The maximum value is 8g, with resolution of 0.063g.
-//	Note: If configuring the transient detection threshold for less than 1g, the high - pass filter will need some settling time.The settling
-//	time will vary depending on selected ODR, high - pass frequency cutoff and threshold.For more information, please refer to
-//	Freescale application note, AN4071.
-void MMA8452Q::setTransientThreshold(float threshold){
+//			If the Low-Noise bit in Register 0x2A is set then the maximum threshold will be 4g.
+void MMA8452Q::setPulseThresholds(float thresholdX, float thresholdY, float thresholdZ){
 	// Must be in standby mode to make changes!!!
 
 	// Convert value to counts between 0-127, place in bits 0:6
-	byte reg = (byte)(threshold * 15.875);
+	byte reg = (byte)(thresholdX * 15.875);
 	reg &= 0x7F;	// Can only be 7 bits
-	writeRegister(TRANSIENT_THS, reg | readRegister(TRANSIENT_THS));
+	writeRegister(PULSE_THSX, reg | readRegister(PULSE_THSX));
+
+	reg = (byte)(thresholdY * 15.875);
+	reg &= 0x7F;	// Can only be 7 bits
+	writeRegister(PULSE_THSY, reg | readRegister(PULSE_THSY));
+
+	reg = (byte)(thresholdZ * 15.875);
+	reg &= 0x7F;	// Can only be 7 bits
+	writeRegister(PULSE_THSZ, reg | readRegister(PULSE_THSZ));
+}
+
+// SET MAXIMUM VALID PULSE WIDTH
+// Actual time step per count depends on power setting and whether pulse
+// low-pass filter option is enabled.  See data sheet (Table 42) for more info.
+// Possible values: 0-255
+void MMA8452Q::setMaxPulseWidth(byte counts){
+	writeRegister(PULSE_TMLT, counts);
+}
+
+// SET MINIMUM LATENCY BETWEEN FIRST AND SECOND PULSE
+// Actual time step per count depends on power setting and whether pulse
+// low-pass filter option is enabled.  See data sheet (Table 42) for more info.
+// Possible values: 0-255
+void MMA8452Q::setPulseLatency(byte counts){
+	writeRegister(PULSE_LTCY, counts);
+}
+
+// SET SECOND PULSE WINDOW (AFTER LATENCY)
+// Actual time step per count depends on power setting and whether pulse
+// low-pass filter option is enabled.  See data sheet (Table 42) for more info.
+// Possible values: 0-255
+void MMA8452Q::setSecondPulseWindow(byte counts){
+	writeRegister(PULSE_WIND, counts);
 }
 
 // SET THE OUTPUT DATA RATE
