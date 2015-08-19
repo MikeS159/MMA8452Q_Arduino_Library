@@ -74,7 +74,7 @@ byte MMA8452Q::init(MMA8452Q_Scale fsr, MMA8452Q_ODR odr)
 //					bit 1: Landscape/portrait change
 //					bit 2: Pulse detection
 //					bit 3: Freefall/motion detection
-//				For example, a value of 5 (binary 0101) will enable wake on transient and pulse.
+//				For example, a value of 5 (binary 0101, hex 0x05) will enable wake on transient and pulse.
 //		sleepTime: Time (in seconds) without wakeTriggers before device falls asleep.  Max value 81s.
 //		intPin: pin (INT_PIN1 or INT_PIN2) where interrupt will be routed when wake/sleep state changes
 void MMA8452Q::setupAutoSleep(MMA8452Q_Sleep_Rate sleepRate, MMA8452Q_Oversampling powerMode, byte wakeTriggers, float sleepTime, MMA8452Q_IntPinRoute intPin)
@@ -82,7 +82,6 @@ void MMA8452Q::setupAutoSleep(MMA8452Q_Sleep_Rate sleepRate, MMA8452Q_Oversampli
 	// Must be in standby to change registers
 	standby();
 
-	// Set sleep rate and oversampling
 	setSleepRate(sleepRate);
 	setSleepOversampling(powerMode);
 
@@ -92,16 +91,15 @@ void MMA8452Q::setupAutoSleep(MMA8452Q_Sleep_Rate sleepRate, MMA8452Q_Oversampli
 	if (wakeTriggers & 0x08) wakeOnFFMotion(true);
 
 	enableAutoSleep(true);
-
 	setSleepTime(sleepTime);
-
+	enableSleepInt(true);
 	routeSleepInt(intPin);
 
 	active();
 }
 
 // SETUP MOTION DETECTION CONFIGURATION, as per AN4070 (application note)
-void MMA8452Q::setupFreefallOrMotionDetection(MMA8452Q_FF_MT_Selection FForMT, MMA8452Q_FF_MT_EventAxes axes, float threshold_g, byte debounceCounts, MMA8452Q_IntPinRoute intPin)
+void MMA8452Q::setupFreefallOrMotionDetection(MMA8452Q_FF_MT_Selection FForMT, MMA8452Q_EventAxes axes, float threshold_g, byte debounceCounts, MMA8452Q_IntPinRoute intPin)
 {
 	// Must be in standby to change registers
 	standby();
@@ -119,6 +117,29 @@ void MMA8452Q::setupFreefallOrMotionDetection(MMA8452Q_FF_MT_Selection FForMT, M
 	// Set the debounce counter to eliminate false readings 
 	// Example: for 100 Hz sample rate with a requirement of 100 ms timer --> 100 ms/10 ms (steps) = 10 counts
 	setFFMotionDebounceSamples(debounceCounts,false);
+
+	// Put the device in Active Mode
+	active();
+}
+// SETUP TRANSIENT DETECTION CONFIGURATION
+void MMA8452Q::setupTransientDetection(bool bypassHPF, MMA8452Q_EventAxes axes, float threshold_g, byte debounceCounts, MMA8452Q_IntPinRoute intPin)
+{
+	// Must be in standby to change registers
+	standby();
+
+	// Configure Transient Detection Interrupt conditions
+	enableTransientEventLatch(true);
+	bypassHPFonTransient(bypassHPF);
+	setTransientAxes(axes);
+	enableTransientInt(true);
+	routeTransientInt(intPin);
+
+	// Threshold Setting Value for Motion detection (Max is 8g)
+	setTransientThreshold(threshold_g);
+
+	// Set the debounce counter to eliminate false readings 
+	// Example: for 100 Hz sample rate with a requirement of 100 ms timer --> 100 ms/10 ms (steps) = 10 counts
+	setTransientDebounceSamples(debounceCounts, false);
 
 	// Put the device in Active Mode
 	active();
@@ -274,7 +295,7 @@ void MMA8452Q::setHPCutoff(MMA8452Q_HPFiltCutoff cutoff)
 //  BYPASS HIGH-PASS FILTER FOR PULSE PROCESSING
 //	If true, output of pulse processing bypasses the high-pass filter
 //	Possible values are true (bypass) and false (use HP filter)
-void MMA8452Q::bypassHPonPulse(bool bypass)
+void MMA8452Q::bypassHPFonPulse(bool bypass)
 {
 	// Must be in standby mode to make changes!!!
 	byte ctrl = readRegister(HP_FILTER_CUTOFF);
@@ -366,7 +387,7 @@ void MMA8452Q::chooseFFMotionDetection(MMA8452Q_FF_MT_Selection FF_or_MT)
 // CHOOSE AXES FOR FREEFALL/MOTION DETECTION
 // The freefall/motion detector can trigger on any combination of axes.
 // Possible values: X, Y, Z, XY, XZ, YZ, XYZ
-void MMA8452Q::setFFMotionAxes(MMA8452Q_FF_MT_EventAxes axes)
+void MMA8452Q::setFFMotionAxes(MMA8452Q_EventAxes axes)
 {
 	// Must be in standby mode to make changes!!!
 	byte ctrl = readRegister(FF_MT_CFG);
@@ -378,19 +399,19 @@ void MMA8452Q::setFFMotionAxes(MMA8452Q_FF_MT_EventAxes axes)
 // CLEAR FREEFALL/MOTION INTERRUPT
 // The interrupt is cleared by reading the register which returns
 // the following information:
-// FFMotionIntData.isDetected: true if an enabled axis triggered the interrupt
-// FFMotionIntData.axes: Boolean true/false indicators of the detected 
+// MotionIntData.isDetected: true if an enabled axis triggered the interrupt
+// MotionIntData.axes: Boolean true/false indicators of the detected 
 //				status on the X, Y, and Z axes respectively.  For example, 
 //				a return of 2 (binary 0010) means that Y was detected, 
 //				a return of 7 (binary 0111) means that X, Y, and Z were all triggered.
 //				Possible values: decimal values 0-7.
-// FFMotionIntData.sign: Boolean sign (0 = "+", 1 = "-") of the detected 
+// MotionIntData.sign: Boolean sign (0 = "+", 1 = "-") of the detected 
 //				event on the X, Y, and Z axes respectively.  For example, 
 //				a return of 3 (binary 0011) means that the disturbance on 
 //				X was negative, on Y was negative, and on Z was positive.  
 //				The sign is relative to the threshold values set in FF_MT_THS.
-FFMotionIntData MMA8452Q::clearFFMotionInterrupt(){
-	FFMotionIntData data;
+MotionIntData MMA8452Q::clearFFMotionInterrupt(){
+	MotionIntData data;
 	byte reg = readRegister(FF_MT_SRC);
 
 	// Mask EA bit (bit 7)
@@ -446,6 +467,122 @@ void MMA8452Q::setFFMotionDebounceSamples(byte samples, bool decrementORreset)
 	writeRegister(FF_MT_THS, reg);
 
 	writeRegister(FF_MT_COUNT, samples);
+}
+
+// ENABLE EVENT LATCH
+// When enabled, the register TRANSIENT_CFG will remain high
+// until it is cleared, once a transient is detected.
+// When disabled (false), TRANSIENT_CFG will show the real-time detection status.
+// Possible values are true (hold latch) or false (real-time status)
+void MMA8452Q::enableTransientEventLatch(bool enable)
+{
+	// Must be in standby mode to make changes!!!
+	byte ctrl = readRegister(TRANSIENT_CFG);
+	ctrl &= 0x10; // Mask out ELE bit (bit 4)
+	ctrl |= (enable << 4);
+	writeRegister(TRANSIENT_CFG, ctrl);
+}
+
+// CHOOSE AXES FOR TRANSIENT DETECTION
+// The transient detector can trigger on any combination of axes.
+// Possible values: X, Y, Z, XY, XZ, YZ, XYZ
+void MMA8452Q::setTransientAxes(MMA8452Q_EventAxes axes)
+{
+	// Must be in standby mode to make changes!!!
+	byte ctrl = readRegister(TRANSIENT_CFG);
+	ctrl &= 0x0E; // Mask out XEFE,YEFE,ZEFE bits (bits [1:3])
+	ctrl |= (axes << 1);
+	writeRegister(TRANSIENT_CFG, ctrl);
+}
+
+// BYPASS HIGH-PASS FILTER (LIKE MOTION DETECTION)
+// The accelerometer can bypass the HPF used for transient
+// detection in order to have a second motion-detection function.
+// Possible values: true (bypass HPF, like motion detection), false (use HPF)
+void MMA8452Q::bypassHPFonTransient(bool bypass)
+{
+	// Must be in standby mode to make changes!!!
+	byte ctrl = readRegister(TRANSIENT_CFG);
+	ctrl &= 0x01; // Mask out HPF_BYP (bit 0)
+	ctrl |= (byte)bypass;
+	writeRegister(TRANSIENT_CFG, ctrl);
+}
+
+// CLEAR TRANSIENT INTERRUPT
+// The interrupt is cleared by reading the register which returns
+// the following information:
+// MotionIntData.isDetected: true if an enabled axis triggered the interrupt
+// MotionIntData.axes: Boolean true/false indicators of the detected 
+//				status on the X, Y, and Z axes respectively.  For example, 
+//				a return of 2 (binary 0010) means that Y was detected, 
+//				a return of 7 (binary 0111) means that X, Y, and Z were all triggered.
+//				Possible values: decimal values 0-7.
+// MotionIntData.sign: Boolean sign (0 = "+", 1 = "-") of the detected 
+//				event on the X, Y, and Z axes respectively.  For example, 
+//				a return of 3 (binary 0011) means that the disturbance on 
+//				X was negative, on Y was negative, and on Z was positive.  
+//				The sign is relative to the threshold values set in TRANSIENT_THS.
+MotionIntData MMA8452Q::clearTransientInterrupt(){
+	MotionIntData data;
+	byte reg = readRegister(TRANSIENT_SRC);
+
+	// Mask EA bit (bit 7)
+	data.isDetected = (bool)(reg & 0x40);
+
+	// Mask individual bits and combine
+	// X: bit 1, Y: bit 3, Z: bit 5
+	byte xVal = reg & 0x02;
+	byte yVal = reg & 0x08;
+	byte zVal = reg & 0x20;
+	// Reorder bits to be at bits 0:2
+	data.axes = (xVal >> 1) | (yVal >> 2) | (zVal >> 3);
+
+	// Mask individual bits and combine
+	// X: bit 1, Y: bit 3, Z: bit 5
+	byte xSign = reg & 0x01;
+	byte ySign = reg & 0x04;
+	byte zSign = reg & 0x10;
+	// Reorder bits to be at bits 0:2
+	data.sign = xSign | (ySign >> 1) | (zSign >> 2);
+
+	return data;
+}
+
+// SET MIN SAMPLES IN DEBOUNCE COUNTER FOR TRANSIENT INTERRUPT TRIGGER
+// Here you can set a value between 0-255 for the number of
+// counts needed in the debounce counter before the interrupt
+// flag is thrown.  Time constant depends on data rate and oversampling mode.
+//		decrementORreset (bool): When a transient event is detected, 
+//			it increments a debounce counter. When the event is no longer 
+//			present, you can choose to either decrement (true) or reset (false) 
+//			the debounce counter.  Decrementing acts as a median filter.
+void MMA8452Q::setTransientDebounceSamples(byte samples, bool decrementORreset)
+{
+
+	// Must be in standby mode to make changes!!!
+	// Place bool flag in bit 7
+	byte reg = readRegister(TRANSIENT_THS);
+	reg &= 0x7F;	// Mask bit 7
+	reg |= decrementORreset << 7;
+	writeRegister(TRANSIENT_THS, reg);
+
+	writeRegister(TRANSIENT_COUNT, samples);
+}
+
+// SETUP TRANSIENT THRESHOLD AND DEBOUNCE BEHAVIOR
+// INPUTS:
+//		threshold (float): Threshold in g's for triggering transient
+//			interrupt.  The maximum value is 8g, with resolution of 0.063g.
+//	Note: If configuring the transient detection threshold for less than 1g, the high - pass filter will need some settling time.The settling
+//	time will vary depending on selected ODR, high - pass frequency cutoff and threshold.For more information, please refer to
+//	Freescale application note, AN4071.
+void MMA8452Q::setTransientThreshold(float threshold){
+	// Must be in standby mode to make changes!!!
+
+	// Convert value to counts between 0-127, place in bits 0:6
+	byte reg = (byte)(threshold * 15.875);
+	reg &= 0x7F;	// Can only be 7 bits
+	writeRegister(TRANSIENT_THS, reg | readRegister(TRANSIENT_THS));
 }
 
 // SET THE OUTPUT DATA RATE

@@ -86,14 +86,14 @@ enum MMA8452Q_IntPinCfg { PUSH_PULL, OPEN_DRAIN }; // possible interrupt pin con
 enum MMA8452Q_IntPinRoute { INT_PIN2, INT_PIN1 }; // possible interrupt pin configuration: INT_PIN2, INT_PIN1
 enum MMA8452Q_HPFiltCutoff{ HP0, HP1, HP2, HP3}; // possible high-pass filter cutoffs: HP0, HP1, HP2, HP3 (see data sheet for more info)
 enum MMA8452Q_FF_MT_Selection{ FREEFALL, MOTION }; // possible configurations of the motion/freefall event detector: FREEFALL, MOTION
-enum MMA8452Q_FF_MT_EventAxes{ NONE, X, Y, XY, Z, XZ, YZ, XYZ}; // possible axes configurations to set-off motion/freefall detection flag: NONE, X, Y, Z, XY, XZ, YZ, XYZ
+enum MMA8452Q_EventAxes{ NONE, X, Y, XY, Z, XZ, YZ, XYZ}; // possible axes configurations to set-off motion/freefall detection flag: NONE, X, Y, Z, XY, XZ, YZ, XYZ
 enum MMA8452Q_PL_Orientation{PORTRAIT_UP,PORTRAIT_DOWN,LANDSCAPE_RIGHT,LANDSCAPE_LEFT}; // Possible orientations of device:  PORTRAIT_UP,PORTRAIT_DOWN,LANDSCAPE_RIGHT,LANDSCAPE_LEFT (see Figure 3 of data sheet)
 
 typedef struct{
 	bool isDetected;
 	byte axes;
 	byte sign;
-}FFMotionIntData;
+}MotionIntData;
 
 typedef struct{
 	bool newPLChange;
@@ -140,7 +140,8 @@ public:
 	byte readPL();
 
 	void setupAutoSleep(MMA8452Q_Sleep_Rate sleepRate, MMA8452Q_Oversampling powerMode, byte wakeTriggers, float sleepTime, MMA8452Q_IntPinRoute intPin);
-	void setupFreefallOrMotionDetection(MMA8452Q_FF_MT_Selection FForMT, MMA8452Q_FF_MT_EventAxes axes, float threshold_g, byte debounceCounts, MMA8452Q_IntPinRoute intPin);
+	void setupFreefallOrMotionDetection(MMA8452Q_FF_MT_Selection FForMT, MMA8452Q_EventAxes axes, float threshold_g, byte debounceCounts, MMA8452Q_IntPinRoute intPin);
+	void setupTransientDetection(bool bypassHPF, MMA8452Q_EventAxes axes, float threshold_g, byte debounceCounts, MMA8452Q_IntPinRoute intPin);
 	void setupPortraitLandscapeDetection(byte debounceCounts, MMA8452Q_IntPinRoute intPin);
 	void clearAllInterrupts();
 
@@ -177,7 +178,7 @@ public:
 
 	//HP_FILTER_CUTOFF (0x0F), High-Pass Filter Register (Read/Write)
 	void setHPCutoff(MMA8452Q_HPFiltCutoff cutoff);
-	void bypassHPonPulse(bool bypass);
+	void bypassHPFonPulse(bool bypass);
 	void enableLPonPulse(bool enable);
 
 	//PL_STATUS (0x10), Portrait/Landscape Status Register (Read Only)
@@ -192,16 +193,54 @@ public:
 	//FF_MT_CFG (0x15), Freefall/Motion Configuration Register (Read/Write)
 	void enableFFMotionEventLatch(bool enable);
 	void chooseFFMotionDetection(MMA8452Q_FF_MT_Selection FF_or_MT);
-	void setFFMotionAxes(MMA8452Q_FF_MT_EventAxes axes);
+	void setFFMotionAxes(MMA8452Q_EventAxes axes);
 
 	//FF_MT_SRC (0x16), Freefall/Motion Source Register (Read Only)
-	FFMotionIntData clearFFMotionInterrupt();
+	MotionIntData clearFFMotionInterrupt();
 
 	//FF_MT_THS (0x17), Freefall/Motion Threshold Register (Read/Write)
 	void setFFMotionThreshold(float threshold);
 
 	//FF_MT_COUNT (0x18), Debounce Register (Read/Write)
 	void setFFMotionDebounceSamples(byte samples, bool decrementORreset);
+
+	//TRANSIENT_CFG (0x1D) (Read/Write)
+	void enableTransientEventLatch(bool enable);
+	void setTransientAxes(MMA8452Q_EventAxes axes);
+	void bypassHPFonTransient(bool bypass);
+	
+	//TRANSIENT_SRC (0x1E) (Read)
+	MotionIntData clearTransientInterrupt();
+
+	//TRANSIENT_THS (0x1F) (Read/Write)
+	void setTransientThreshold(float threshold);
+
+	//TRANSIENT_COUNT (0x20) (Read/Write)
+	void setTransientDebounceSamples(byte samples, bool decrementORreset);
+
+	//PULSE_CFG (0x21), Debounce Register (Read/Write)
+	//TO DO
+
+	//PULSE_SRC (0x22), Debounce Register (Read)
+	//TO DO
+
+	//PULSE_THSX (0x23), Debounce Register (Read/Write)
+	//TO DO
+
+	//PULSE_THSY (0x24), Debounce Register (Read/Write)
+	//TO DO
+
+	//PULSE_THSZ (0x25), Debounce Register (Read/Write)
+	//TO DO
+
+	//PULSE_TMLT (0x26), Debounce Register (Read/Write)
+	//TO DO
+
+	//PULSE_LTCY (0x27), Debounce Register (Read/Write)
+	//TO DO
+
+	//PULSE_WIND (0x28), Debounce Register (Read/Write)
+	//TO DO
 
 	//ASLP_COUNT (0x29),  Sleep time register (Read/Write)
 	void setSleepTime(float time);
